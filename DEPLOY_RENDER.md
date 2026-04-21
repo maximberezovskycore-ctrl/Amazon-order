@@ -27,17 +27,13 @@ NODE_ENV=production
 USE_POSTGRES_JOBS=true
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_STORAGE_BUCKET=sourcing-files
 DATABASE_URL=...
 DIRECT_URL=...
 ```
 
-For file uploads in production, also add storage variables if using S3-compatible storage:
-
-```text
-AWS_REGION=...
-AWS_BUCKET_NAME=...
-AWS_FOLDER_PREFIX=...
-```
+Create a private Supabase Storage bucket named `sourcing-files`.
 
 ## Database
 
@@ -51,4 +47,4 @@ On Render this can be run from the service shell, or locally before deploy if yo
 
 ## Important
 
-Local upload storage (`.local-storage`) is only for development. On a hosted server, files can disappear after restart unless you use S3, Cloudflare R2, or another persistent storage service.
+Local upload storage is only for development. On Render, use Supabase Storage with `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_STORAGE_BUCKET`.

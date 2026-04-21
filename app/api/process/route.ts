@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getFileBuffer, saveLocalOutput } from '@/lib/s3';
+import { getFileBuffer, saveOutput } from '@/lib/s3';
 import { processFiles, generateExcel, isKeepaFile, parseCSVExport, type RunConfig, DEFAULT_CONFIG } from '@/lib/sourcing-engine';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { createS3Client, getBucketConfig } from '@/lib/aws-config';
@@ -168,7 +168,7 @@ async function uploadResult(excelFileName: string, excelBuffer: Buffer) {
     }), { expiresIn: 3600 });
   } catch (error) {
     console.warn('Falling back to local output storage:', error);
-    const local = await saveLocalOutput(excelFileName, excelBuffer);
+    const local = await saveOutput(excelFileName, excelBuffer);
     return local.downloadUrl;
   }
 }

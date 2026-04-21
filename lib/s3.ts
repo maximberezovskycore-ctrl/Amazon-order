@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createClient } from "@supabase/supabase-js";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
@@ -11,6 +12,7 @@ import { createS3Client, getBucketConfig } from "./aws-config";
 
 const s3 = createS3Client();
 const LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(os.tmpdir(), "amazon-sourcing-storage");
+const SUPABASE_STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "sourcing-files";
 
 function safeFileName(fileName: string) {
   return fileName.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 160) || "file";
@@ -18,6 +20,90 @@ function safeFileName(fileName: string) {
 
 export function isLocalStoragePath(cloud_storage_path: string) {
   return cloud_storage_path.startsWith("local://");
+}
+
+export function isSupabaseStoragePath(cloud_storage_path: string) {
+  return cloud_storage_path.startsWith("supabase://");
+}
+
+function getSupabaseStorageClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceRoleKey) return null;
+
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
+
+function supabasePath(cloud_storage_path: string) {
+  return cloud_storage_path.replace(/^supabase:\/\//, "");
+}
+
+export async function saveUpload(fileName: string, buffer: Buffer, contentType = "application/octet-stream") {
+  const supabase = getSupabaseStorageClient();
+
+  if (!supabase) {
+    return saveLocalUpload(fileName, buffer);
+  }
+
+  const storagePath = `uploads/${Date.now()}-${safeFileName(fileName)}`;
+  const { error } = await supabase.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .upload(storagePath, buffer, {
+      contentType,
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Supabase upload failed: ${error.message}`);
+  }
+
+  return `supabase://${storagePath}`;
+}
+
+export async function saveOutput(fileName: string, buffer: Buffer) {
+  const supabase = getSupabaseStorageClient();
+
+  if (!supabase) {
+    return saveLocalOutput(fileName, buffer);
+  }
+
+  const storagePath = `outputs/${Date.now()}-${safeFileName(fileName)}`;
+  const { error } = await supabase.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .upload(storagePath, buffer, {
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Supabase output upload failed: ${error.message}`);
+  }
+
+  return {
+    storedName: storagePath,
+    downloadUrl: `/api/download/storage?file=${encodeURIComponent(storagePath)}`,
+  };
+}
+
+export async function getSupabaseStorageBuffer(fileName: string) {
+  const supabase = getSupabaseStorageClient();
+  if (!supabase) throw new Error("Supabase Storage is not configured.");
+
+  const { data, error } = await supabase.storage
+    .from(SUPABASE_STORAGE_BUCKET)
+    .download(fileName);
+
+  if (error) {
+    throw new Error(`Supabase download failed: ${error.message}`);
+  }
+
+  return Buffer.from(await data.arrayBuffer());
 }
 
 export async function saveLocalUpload(fileName: string, buffer: Buffer) {
@@ -85,6 +171,10 @@ export async function getFileBuffer(cloud_storage_path: string): Promise<Buffer>
   if (isLocalStoragePath(cloud_storage_path)) {
     const relativePath = cloud_storage_path.replace(/^local:\/\//, "");
     return readFile(path.join(LOCAL_STORAGE_DIR, relativePath));
+  }
+
+  if (isSupabaseStoragePath(cloud_storage_path)) {
+    return getSupabaseStorageBuffer(supabasePath(cloud_storage_path));
   }
 
   const { bucketName } = getBucketConfig();

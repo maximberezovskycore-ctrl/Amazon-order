@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { saveLocalUpload } from '@/lib/s3';
+import { saveUpload } from '@/lib/s3';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const cloud_storage_path = await saveLocalUpload(file.name, buffer);
+    const cloud_storage_path = await saveUpload(file.name, buffer, file.type || 'application/octet-stream');
 
     return NextResponse.json({ cloud_storage_path });
   } catch (error: any) {
