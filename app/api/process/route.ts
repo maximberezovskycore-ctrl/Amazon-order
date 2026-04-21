@@ -51,7 +51,12 @@ async function runProcessing(jobId: string, files: any[], userConfig: any) {
     const { cloud_storage_path, fileName, fileType } = file ?? {};
     if (!cloud_storage_path || !fileName) continue;
 
-    const buffer = await getFileBuffer(cloud_storage_path);
+    let buffer: Buffer;
+    try {
+      buffer = await getFileBuffer(cloud_storage_path);
+    } catch (error: any) {
+      throw new Error(`Uploaded file is no longer available: ${fileName}. Please upload the files again and start processing right away.`);
+    }
 
     if (fileType === 'keepa') {
       keepaBuffers.push({ name: fileName, buffer });

@@ -5,11 +5,12 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { mkdir, readFile, writeFile } from "fs/promises";
+import os from "os";
 import path from "path";
 import { createS3Client, getBucketConfig } from "./aws-config";
 
 const s3 = createS3Client();
-const LOCAL_STORAGE_DIR = path.join(process.cwd(), ".local-storage");
+const LOCAL_STORAGE_DIR = process.env.LOCAL_STORAGE_DIR || path.join(os.tmpdir(), "amazon-sourcing-storage");
 
 function safeFileName(fileName: string) {
   return fileName.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 160) || "file";

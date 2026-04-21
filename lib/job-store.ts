@@ -55,45 +55,95 @@ function normalizeStatus(status: string): JobStatus {
 
 async function cleanupExpiredJobs() {
   const cutoff = new Date(Date.now() - JOB_TTL_MS);
-  if (!hasDatabase()) {
-    for (const [id, job] of memoryJobs) {
-      if (job.createdAt < cutoff.getTime()) memoryJobs.delete(id);
-    }
-    return;
+
+  for (const [id, job] of memoryJobs) {
+    if (job.createdAt < cutoff.getTime()) memoryJobs.delete(id);
   }
 
-  await prisma.sourcingJob.deleteMany({
-    where: {
-      createdAt: {
-        lt: cutoff,
-      },
-    },
-  });
+  if (hasDatabase()) {
+    try {
+      await prisma.sourcingJob.deleteMany({
+        where: {
+          createdAt: {
+            lt: cutoff,
+          },
+        },
+      });
+    } catch (error) {
+      console.warn('Job cleanup skipped because database is unavailable:', error);
+    }
+  }
+}
+
+function createMemoryJob(): JobState {
+  const job: JobState = {
+    id: `job_${Date.now()}_${randomUUID().slice(0, 8)}`,
+    status: 'pending',
+    progress: 'Queued...',
+    createdAt: Date.now(),
+  };
+  memoryJobs.set(job.id, job);
+  return job;
+}
+
+function rememberJob(job: JobState) {
+  memoryJobs.set(job.id, job);
+  return job;
+}
+
+function updateMemoryJob(id: string, updates: Partial<Omit<JobState, 'id' | 'createdAt'>>) {
+  const job = memoryJobs.get(id);
+  if (job) {
+    Object.assign(job, updates);
+  }
+}
+
+function databaseUpdates(updates: Partial<Omit<JobState, 'id' | 'createdAt'>>) {
+  const data: {
+    status?: JobStatus;
+    progress?: string;
+    result?: Prisma.InputJsonValue;
+    error?: string | null;
+  } = {};
+
+  if (updates.status !== undefined) data.status = updates.status;
+  if (updates.progress !== undefined) data.progress = updates.progress;
+  if (updates.result !== undefined) data.result = updates.result as unknown as Prisma.InputJsonValue;
+  if (updates.error !== undefined) data.error = updates.error;
+
+  return data;
 }
 
 export async function createJob(): Promise<JobState> {
   await cleanupExpiredJobs();
 
   if (!hasDatabase()) {
+    return createMemoryJob();
+  }
+
+  const id = `job_${Date.now()}_${randomUUID().slice(0, 8)}`;
+
+  try {
+    const job = await prisma.sourcingJob.create({
+      data: {
+        id,
+        status: 'pending',
+        progress: 'Queued...',
+      },
+    });
+
+    return rememberJob(toJobState(job));
+  } catch (error) {
+    console.warn('Falling back to in-memory job store because database is unavailable:', error);
     const job: JobState = {
-      id: `job_${Date.now()}_${randomUUID().slice(0, 8)}`,
+      id,
       status: 'pending',
       progress: 'Queued...',
       createdAt: Date.now(),
     };
-    memoryJobs.set(job.id, job);
+    memoryJobs.set(id, job);
     return job;
   }
-
-  const job = await prisma.sourcingJob.create({
-    data: {
-      id: `job_${Date.now()}_${randomUUID().slice(0, 8)}`,
-      status: 'pending',
-      progress: 'Queued...',
-    },
-  });
-
-  return toJobState(job);
 }
 
 export async function getJob(id: string): Promise<JobState | undefined> {
@@ -101,29 +151,31 @@ export async function getJob(id: string): Promise<JobState | undefined> {
     return memoryJobs.get(id);
   }
 
-  const job = await prisma.sourcingJob.findUnique({
-    where: { id },
-  });
+  try {
+    const job = await prisma.sourcingJob.findUnique({
+      where: { id },
+    });
 
-  return job ? toJobState(job) : undefined;
+    return job ? rememberJob(toJobState(job)) : memoryJobs.get(id);
+  } catch (error) {
+    console.warn('Reading job from memory because database is unavailable:', error);
+    return memoryJobs.get(id);
+  }
 }
 
 export async function updateJob(id: string, updates: Partial<Omit<JobState, 'id' | 'createdAt'>>) {
+  updateMemoryJob(id, updates);
+
   if (!hasDatabase()) {
-    const job = memoryJobs.get(id);
-    if (job) {
-      Object.assign(job, updates);
-    }
     return;
   }
 
-  await prisma.sourcingJob.update({
-    where: { id },
-    data: {
-      status: updates.status,
-      progress: updates.progress,
-      result: updates.result ? (updates.result as unknown as Prisma.InputJsonValue) : undefined,
-      error: updates.error,
-    },
-  });
+  try {
+    await prisma.sourcingJob.update({
+      where: { id },
+      data: databaseUpdates(updates),
+    });
+  } catch (error) {
+    console.warn('Job update kept in memory because database is unavailable:', error);
+  }
 }
