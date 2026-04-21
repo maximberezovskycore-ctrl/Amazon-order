@@ -1,0 +1,101 @@
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import path from "path";
+import { createS3Client, getBucketConfig } from "./aws-config";
+
+const s3 = createS3Client();
+const LOCAL_STORAGE_DIR = path.join(process.cwd(), ".local-storage");
+
+function safeFileName(fileName: string) {
+  return fileName.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 160) || "file";
+}
+
+export function isLocalStoragePath(cloud_storage_path: string) {
+  return cloud_storage_path.startsWith("local://");
+}
+
+export async function saveLocalUpload(fileName: string, buffer: Buffer) {
+  const storedName = `${Date.now()}-${safeFileName(fileName)}`;
+  const uploadDir = path.join(LOCAL_STORAGE_DIR, "uploads");
+  await mkdir(uploadDir, { recursive: true });
+  await writeFile(path.join(uploadDir, storedName), buffer);
+  return `local://uploads/${storedName}`;
+}
+
+export async function saveLocalOutput(fileName: string, buffer: Buffer) {
+  const storedName = `${Date.now()}-${safeFileName(fileName)}`;
+  const outputDir = path.join(LOCAL_STORAGE_DIR, "outputs");
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(path.join(outputDir, storedName), buffer);
+  return { storedName, downloadUrl: `/api/download/local?file=${encodeURIComponent(storedName)}` };
+}
+
+export async function getLocalOutputBuffer(fileName: string) {
+  return readFile(path.join(LOCAL_STORAGE_DIR, "outputs", safeFileName(fileName)));
+}
+
+export async function generatePresignedUploadUrl(
+  fileName: string,
+  contentType: string,
+  isPublic = false
+) {
+  const { bucketName, folderPrefix } = getBucketConfig();
+  const prefix = isPublic ? `${folderPrefix}public/uploads` : `${folderPrefix}uploads`;
+  const cloud_storage_path = `${prefix}/${Date.now()}-${fileName}`;
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: cloud_storage_path,
+    ContentType: contentType,
+    ContentDisposition: isPublic ? "attachment" : undefined,
+  });
+  const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+  return { uploadUrl, cloud_storage_path };
+}
+
+export async function getFileUrl(cloud_storage_path: string, isPublic: boolean) {
+  const { bucketName } = getBucketConfig();
+  if (isPublic) {
+    const region = process.env.AWS_REGION ?? "us-east-1";
+    return `https://${bucketName}.s3.${region}.amazonaws.com/${cloud_storage_path}`;
+  }
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: cloud_storage_path,
+    ResponseContentDisposition: "attachment",
+  });
+  return getSignedUrl(s3, command, { expiresIn: 3600 });
+}
+
+export async function deleteFile(cloud_storage_path: string) {
+  const { bucketName } = getBucketConfig();
+  const command = new DeleteObjectCommand({
+    Bucket: bucketName,
+    Key: cloud_storage_path,
+  });
+  await s3.send(command);
+}
+
+export async function getFileBuffer(cloud_storage_path: string): Promise<Buffer> {
+  if (isLocalStoragePath(cloud_storage_path)) {
+    const relativePath = cloud_storage_path.replace(/^local:\/\//, "");
+    return readFile(path.join(LOCAL_STORAGE_DIR, relativePath));
+  }
+
+  const { bucketName } = getBucketConfig();
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: cloud_storage_path,
+  });
+  const response = await s3.send(command);
+  const stream = response.Body as any;
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}

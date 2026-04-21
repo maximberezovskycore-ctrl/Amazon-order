@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: amazon-sourcing
+    env: node
+    plan: free
+    buildCommand: npm ci --no-audit --no-fund && npm run db:generate && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: USE_POSTGRES_JOBS
+        value: "true"
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_BUCKET_NAME
+        sync: false
+      - key: AWS_FOLDER_PREFIX
+        sync: false

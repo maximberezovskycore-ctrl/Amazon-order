@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# local env and secrets
+.env
+.env.local
+.env.*.local
+
+# local runtime files
+.local-storage/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
